@@ -255,6 +255,13 @@
         .imp-summ { font-size: 0.82rem; color: var(--text2); margin-bottom: 8px; line-height: 1.5; }
         .csv-fmt-lbl { font-size: 0.75rem; color: var(--text2); margin-bottom: 6px; }
         .csv-fmt-lbl strong { color: var(--accent); }
+        /* Guia de exportacion */
+        .gbtn { padding: 6px 14px; border-radius: 20px; border: 1px solid var(--border); background: transparent; color: var(--text2); cursor: pointer; font-size: 0.8rem; transition: 0.15s; }
+        .gbtn:hover, .gbtn.on { background: rgba(88,166,255,0.15); border-color: var(--accent); color: var(--accent); font-weight: 600; }
+        .guide-steps { display: flex; flex-direction: column; gap: 10px; }
+        .gstep { display: flex; gap: 12px; align-items: flex-start; font-size: 0.85rem; line-height: 1.55; }
+        .gn { width: 24px; height: 24px; border-radius: 50%; background: var(--acc-dark); color: white; display: flex; align-items: center; justify-content: center; font-size: 0.72rem; font-weight: 700; flex-shrink: 0; margin-top: 1px; }
+        .gcode { background: var(--surface2); border: 1px solid var(--border); border-radius: 4px; padding: 2px 7px; font-family: monospace; font-size: 0.82rem; color: var(--accent); display: inline-block; margin-top: 3px; }
 
         @media (max-width: 620px) {
             .sidebar { display: none; }
@@ -305,7 +312,7 @@
         </div>
         <div class="hdr-btns">
             <button class="ibtn pri" onclick="openEntry()">+ Nueva</button>
-            <button class="ibtn" onclick="document.getElementById('csv-file').click()" title="Importar desde Chrome, Firefox, Bitwarden, LastPass...">📥 CSV</button>
+            <button class="ibtn" onclick="openM('m-guide')" title="Importar desde Chrome, Firefox, Bitwarden, LastPass...">📥 CSV</button>
             <input type="file" id="csv-file" accept=".csv,.txt" style="display:none" onchange="importCSV(event)">
             <button class="ibtn" onclick="document.getElementById('imp-file').click()" title="Importar backup .vault">📥 Vault</button>
             <input type="file" id="imp-file" accept=".vault" style="display:none" onchange="importVault(event)">
@@ -421,6 +428,59 @@
         <div class="m-acts">
             <button class="btn-cancel"    onclick="closeM('m-del')">Cancelar</button>
             <button class="btn-del-solid" onclick="doDelete()">Eliminar</button>
+        </div>
+    </div>
+</div>
+
+<!-- ══════════════ MODAL: GUIA EXPORTAR ══════════════ -->
+<div class="overlay" id="m-guide">
+    <div class="modal" style="max-width:520px;">
+        <h2>📖 Cómo exportar tus contraseñas</h2>
+        <div style="display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap;">
+            <button class="gbtn on" onclick="showBrowser('chrome',this)">Chrome</button>
+            <button class="gbtn"    onclick="showBrowser('edge',this)">Edge</button>
+            <button class="gbtn"    onclick="showBrowser('firefox',this)">Firefox</button>
+            <button class="gbtn"    onclick="showBrowser('safari',this)">Safari</button>
+            <button class="gbtn"    onclick="showBrowser('bitwarden',this)">Bitwarden</button>
+        </div>
+        <div id="guide-chrome" class="guide-steps">
+            <div class="gstep"><span class="gn">1</span><div><strong>Abre Chrome</strong> y escribe en la barra de direcciones:<br><code class="gcode">chrome://password-manager/passwords</code> y pulsa Enter</div></div>
+            <div class="gstep"><span class="gn">2</span><div>Haz clic en el icono <strong>⚙️ (engranaje)</strong> arriba a la derecha</div></div>
+            <div class="gstep"><span class="gn">3</span><div>Haz clic en <strong>"Exportar contraseñas"</strong> → <strong>"Exportar contraseñas"</strong> de nuevo en el diálogo</div></div>
+            <div class="gstep"><span class="gn">4</span><div>Guarda el archivo <code>.csv</code> en el escritorio</div></div>
+            <div class="gstep"><span class="gn">5</span><div>Vuelve aquí y pulsa <strong>"📥 CSV"</strong> → selecciona ese archivo</div></div>
+        </div>
+        <div id="guide-edge" class="guide-steps" style="display:none">
+            <div class="gstep"><span class="gn">1</span><div>Abre Edge y ve a:<br><code class="gcode">edge://password-manager/passwords</code></div></div>
+            <div class="gstep"><span class="gn">2</span><div>Haz clic en <strong>⚙️ Configuración</strong> en el menú de la izquierda</div></div>
+            <div class="gstep"><span class="gn">3</span><div>Haz clic en <strong>"Exportar contraseñas"</strong></div></div>
+            <div class="gstep"><span class="gn">4</span><div>Confirma con tu PIN o huella dactilar si se pide</div></div>
+            <div class="gstep"><span class="gn">5</span><div>Guarda el <code>.csv</code> y luego pulsa <strong>"📥 CSV"</strong> aquí</div></div>
+        </div>
+        <div id="guide-firefox" class="guide-steps" style="display:none">
+            <div class="gstep"><span class="gn">1</span><div>Abre Firefox y ve a:<br><code class="gcode">about:logins</code></div></div>
+            <div class="gstep"><span class="gn">2</span><div>Haz clic en el menú <strong>☰</strong> (tres puntos arriba a la derecha)</div></div>
+            <div class="gstep"><span class="gn">3</span><div>Selecciona <strong>"Exportar contraseñas de inicio de sesión..."</strong></div></div>
+            <div class="gstep"><span class="gn">4</span><div>Guarda el <code>.csv</code> y luego pulsa <strong>"📥 CSV"</strong> aquí</div></div>
+        </div>
+        <div id="guide-safari" class="guide-steps" style="display:none">
+            <div class="gstep"><span class="gn">1</span><div>Abre Safari → menú <strong>Safari → Configuración</strong> (o Preferencias)</div></div>
+            <div class="gstep"><span class="gn">2</span><div>Ve a la pestaña <strong>"Contraseñas"</strong> e introduce tu contraseña de Mac</div></div>
+            <div class="gstep"><span class="gn">3</span><div>Haz clic en el menú <strong>⋯</strong> abajo a la izquierda → <strong>"Exportar todas las contraseñas…"</strong></div></div>
+            <div class="gstep"><span class="gn">4</span><div>Guarda el <code>.csv</code> y luego pulsa <strong>"📥 CSV"</strong> aquí</div></div>
+        </div>
+        <div id="guide-bitwarden" class="guide-steps" style="display:none">
+            <div class="gstep"><span class="gn">1</span><div>Abre Bitwarden (web o app) → <strong>Herramientas → Exportar Vault</strong></div></div>
+            <div class="gstep"><span class="gn">2</span><div>Selecciona formato <strong>".csv"</strong> (no JSON)</div></div>
+            <div class="gstep"><span class="gn">3</span><div>Introduce tu contraseña maestra y haz clic en <strong>"Exportar Vault"</strong></div></div>
+            <div class="gstep"><span class="gn">4</span><div>Guarda el <code>.csv</code> y luego pulsa <strong>"📥 CSV"</strong> aquí</div></div>
+        </div>
+        <div style="margin-top:16px;padding:12px;background:rgba(248,81,73,0.08);border:1px solid rgba(248,81,73,0.3);border-radius:8px;font-size:0.78rem;color:var(--text2);">
+            ⚠️ <strong>Importante:</strong> Borra el archivo CSV del escritorio después de importarlo. Contiene tus contraseñas en texto plano.
+        </div>
+        <div class="m-acts">
+            <button class="btn-cancel" onclick="closeM('m-guide')">Cerrar</button>
+            <button class="btn-save"   onclick="closeM('m-guide');document.getElementById('csv-file').click()">📥 Importar CSV ahora</button>
         </div>
     </div>
 </div>
@@ -895,6 +955,16 @@ function updStr(pw) {
     const { score, col, lbl } = str(pw);
     for (let i=0;i<5;i++) { const s=$('ss'+i); if(s) s.style.background = i<score ? col : 'var(--border)'; }
     const l = $('str-lbl'); if(l) { l.textContent = pw ? lbl : ''; l.style.color = col; }
+}
+
+// ═══════════════════════════════════════════════════
+// GUIA DE EXPORTACION
+// ═══════════════════════════════════════════════════
+function showBrowser(id, btn) {
+    document.querySelectorAll('.guide-steps').forEach(el => el.style.display = 'none');
+    document.querySelectorAll('.gbtn').forEach(b => b.classList.remove('on'));
+    $('guide-' + id).style.display = 'flex';
+    btn.classList.add('on');
 }
 
 // ═══════════════════════════════════════════════════
