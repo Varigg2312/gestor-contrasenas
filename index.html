@@ -230,6 +230,32 @@
         /* Scrollbar */
         ::-webkit-scrollbar { width: 5px; } ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
 
+        /* ── SALUD / ORGANIZAR ── */
+        .health-grid { display: grid; grid-template-columns: repeat(2,1fr); gap: 10px; margin-bottom: 18px; }
+        .health-stat { background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 14px; text-align: center; }
+        .health-stat .hs-n { font-size: 1.8rem; font-weight: 700; }
+        .health-stat .hs-l { font-size: 0.72rem; color: var(--text2); margin-top: 3px; }
+        .health-stat.ok  .hs-n { color: var(--success); }
+        .health-stat.w   .hs-n { color: var(--warning); }
+        .health-stat.err .hs-n { color: var(--danger); }
+        .health-stat.acc .hs-n { color: var(--accent); }
+        .issue-list { list-style: none; max-height: 220px; overflow-y: auto; }
+        .issue-list li { padding: 7px 0; border-bottom: 1px solid var(--border); display: flex; align-items: flex-start; gap: 8px; color: var(--text2); font-size: 0.81rem; }
+        .issue-list li:last-child { border-bottom: none; }
+        .issue-tag { font-size: 0.68rem; padding: 1px 7px; border-radius: 10px; font-weight: 600; flex-shrink: 0; }
+        .tag-dup  { background: rgba(210,153,34,0.2); color: var(--warning); }
+        .tag-weak { background: rgba(248,81,73,0.15); color: var(--danger); }
+        .tag-reuse{ background: rgba(188,140,255,0.2); color: var(--purple); }
+        /* Import CSV */
+        .imp-scroll { max-height: 240px; overflow-y: auto; margin: 10px 0; border: 1px solid var(--border); border-radius: 6px; }
+        .imp-table { width: 100%; border-collapse: collapse; font-size: 0.78rem; }
+        .imp-table th { background: var(--surface2); padding: 6px 8px; text-align: left; font-size: 0.68rem; color: var(--text2); text-transform: uppercase; border-bottom: 1px solid var(--border); position: sticky; top: 0; }
+        .imp-table td { padding: 5px 8px; border-bottom: 1px solid var(--border); color: var(--text); max-width: 130px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .imp-table tr.dup td { background: rgba(210,153,34,0.07); }
+        .imp-summ { font-size: 0.82rem; color: var(--text2); margin-bottom: 8px; line-height: 1.5; }
+        .csv-fmt-lbl { font-size: 0.75rem; color: var(--text2); margin-bottom: 6px; }
+        .csv-fmt-lbl strong { color: var(--accent); }
+
         @media (max-width: 620px) {
             .sidebar { display: none; }
             .grid { grid-template-columns: 1fr; }
@@ -279,9 +305,12 @@
         </div>
         <div class="hdr-btns">
             <button class="ibtn pri" onclick="openEntry()">+ Nueva</button>
-            <button class="ibtn" onclick="document.getElementById('imp-file').click()" title="Importar backup">📥</button>
+            <button class="ibtn" onclick="document.getElementById('csv-file').click()" title="Importar desde Chrome, Firefox, Bitwarden, LastPass...">📥 CSV</button>
+            <input type="file" id="csv-file" accept=".csv,.txt" style="display:none" onchange="importCSV(event)">
+            <button class="ibtn" onclick="document.getElementById('imp-file').click()" title="Importar backup .vault">📥 Vault</button>
             <input type="file" id="imp-file" accept=".vault" style="display:none" onchange="importVault(event)">
-            <button class="ibtn" onclick="exportVault()" title="Exportar backup">📤</button>
+            <button class="ibtn" onclick="exportVault()" title="Exportar backup cifrado">📤</button>
+            <button class="ibtn" onclick="openHealth()" title="Salud del vault y auto-categorizar">✨ Organizar</button>
             <button class="ibtn red" onclick="lockVault()" title="Bloquear">🔒 <span class="lock-cd" id="lcd"></span></button>
         </div>
     </header>
@@ -392,6 +421,49 @@
         <div class="m-acts">
             <button class="btn-cancel"    onclick="closeM('m-del')">Cancelar</button>
             <button class="btn-del-solid" onclick="doDelete()">Eliminar</button>
+        </div>
+    </div>
+</div>
+
+<!-- ══════════════ MODAL: IMPORTAR CSV ══════════════ -->
+<div class="overlay" id="m-csv">
+    <div class="modal" style="max-width:560px;">
+        <h2>📥 Importar desde CSV</h2>
+        <div class="csv-fmt-lbl">Formato detectado: <strong id="csv-fmt">—</strong></div>
+        <div class="imp-summ" id="csv-summ"></div>
+        <div class="imp-scroll">
+            <table class="imp-table">
+                <thead><tr><th>Nombre</th><th>Usuario</th><th>Categoría</th><th>Estado</th></tr></thead>
+                <tbody id="csv-tbody"></tbody>
+            </table>
+        </div>
+        <div id="csv-more" style="font-size:0.75rem;color:var(--text2);margin-bottom:10px;"></div>
+        <label style="display:flex;align-items:center;gap:8px;font-size:0.83rem;color:var(--text2);cursor:pointer;margin-bottom:6px;">
+            <input type="checkbox" id="csv-skipdups" checked style="accent-color:var(--accent)">
+            Omitir duplicadas (ya existen en el vault)
+        </label>
+        <div class="m-acts">
+            <button class="btn-cancel" onclick="closeM('m-csv')">Cancelar</button>
+            <button class="btn-save"   onclick="confirmImportCSV()">Importar ✅</button>
+        </div>
+    </div>
+</div>
+
+<!-- ══════════════ MODAL: SALUD / ORGANIZAR ══════════════ -->
+<div class="overlay" id="m-health">
+    <div class="modal" style="max-width:480px;">
+        <h2>✨ Salud del Vault</h2>
+        <div class="health-grid">
+            <div class="health-stat acc"><div class="hs-n" id="h-total">0</div><div class="hs-l">Total entradas</div></div>
+            <div class="health-stat w">  <div class="hs-n" id="h-dups">0</div> <div class="hs-l">Duplicadas</div></div>
+            <div class="health-stat err"><div class="hs-n" id="h-weak">0</div> <div class="hs-l">Contraseñas débiles</div></div>
+            <div class="health-stat w">  <div class="hs-n" id="h-reuse">0</div><div class="hs-l">Contraseñas reutilizadas</div></div>
+        </div>
+        <div style="font-size:0.75rem;color:var(--text2);margin-bottom:8px;" id="h-recat"></div>
+        <ul class="issue-list" id="h-issues"></ul>
+        <div class="m-acts" style="margin-top:16px;">
+            <button class="btn-cancel" onclick="closeM('m-health')">Cerrar</button>
+            <button class="btn-save"   onclick="doAutoOrganize()">✨ Auto-categorizar todo</button>
         </div>
     </div>
 </div>
@@ -823,6 +895,163 @@ function updStr(pw) {
     const { score, col, lbl } = str(pw);
     for (let i=0;i<5;i++) { const s=$('ss'+i); if(s) s.style.background = i<score ? col : 'var(--border)'; }
     const l = $('str-lbl'); if(l) { l.textContent = pw ? lbl : ''; l.style.color = col; }
+}
+
+// ═══════════════════════════════════════════════════
+// AUTO-CATEGORIZACIÓN POR PALABRAS CLAVE
+// ═══════════════════════════════════════════════════
+const CAT_RULES = [
+    { cat:'Banco',    kw:['banco','bank','bbva','santander','caixa','ing','sabadell','bankia','bankinter','kutxa','ibercaja','unicaja','openbank','n26','revolut','wise','paypal','stripe','monzo','bizum','payoneer','cash','finanzas','finance','trading','broker','inversion','bolsa','coinbase','binance','kraken'] },
+    { cat:'Email',    kw:['gmail','outlook','yahoo','mail','hotmail','protonmail','tutanota','fastmail','zohomail','icloud','thunderbird','correo','webmail','posteo','mailbox'] },
+    { cat:'App',      kw:['spotify','netflix','hbo','disney','twitch','steam','epic','playstation','xbox','nintendo','apple','android','github','gitlab','bitbucket','docker','aws','azure','gcloud','heroku','vercel','netlify','digitalocean','cloudflare','wordpress','vimeo','figma','canva','adobe','autodesk'] },
+    { cat:'Trabajo',  kw:['slack','teams','zoom','meet','jira','confluence','notion','trello','asana','monday','salesforce','hubspot','workday','linkedin','indeed','glassdoor','office365','gsuite','workspace','erp','crm','empresa','trabajo','work','intranet','empleado','nomina','rrhh'] },
+    { cat:'Web',      kw:['google','facebook','twitter','instagram','reddit','youtube','tiktok','pinterest','tumblr','amazon','ebay','aliexpress','wallapop','etsy','booking','airbnb','tripadvisor','wikipedia','dropbox','onedrive','drive','skype','whatsapp','telegram','discord','snapchat','twitch'] },
+];
+
+function autoCategory(name, url) {
+    const hay = ((name||'') + ' ' + (url||'')).toLowerCase();
+    for (const rule of CAT_RULES) {
+        if (rule.kw.some(k => hay.includes(k))) return rule.cat;
+    }
+    return null;
+}
+
+// ═══════════════════════════════════════════════════
+// IMPORTAR CSV (Chrome, Firefox, Bitwarden, LastPass, 1Password, Safari)
+// ═══════════════════════════════════════════════════
+function parseCSVRow(line) {
+    const result = []; let cur = '', inQ = false;
+    for (let i = 0; i < line.length; i++) {
+        const ch = line[i];
+        if (ch === '"') {
+            if (inQ && line[i+1] === '"') { cur += '"'; i++; }
+            else inQ = !inQ;
+        } else if (ch === ',' && !inQ) { result.push(cur); cur = ''; }
+        else cur += ch;
+    }
+    result.push(cur);
+    return result;
+}
+
+function detectFormat(hdrs) {
+    const h = hdrs.map(x => x.toLowerCase().trim());
+    if (h.includes('login_username') && h.includes('login_password'))
+        return { fmt:'Bitwarden', name:'name', url:'login_uri', user:'login_username', pass:'login_password', notes:'notes' };
+    if (h.includes('url') && h.includes('username') && h.includes('password') && h.includes('httprealm'))
+        return { fmt:'Firefox', name:null, url:'url', user:'username', pass:'password', notes:null };
+    if (h.includes('url') && h.includes('username') && h.includes('password') && h.includes('grouping'))
+        return { fmt:'LastPass', name:'name', url:'url', user:'username', pass:'password', notes:'extra' };
+    if (h.includes('name') && h.includes('url') && h.includes('username') && h.includes('password'))
+        return { fmt:'Chrome / Edge', name:'name', url:'url', user:'username', pass:'password', notes: h.includes('note')?'note':null };
+    if ((h.includes('title')||h.includes('name')) && (h.includes('url')||h.includes('website')) && h.includes('username') && h.includes('password'))
+        return { fmt:'Safari / 1Password', name:h.includes('title')?'title':'name', url:h.includes('url')?'url':'website', user:'username', pass:'password', notes:h.includes('notes')?'notes':null };
+    const nu = h.find(x=>['name','title','site','sitename'].includes(x));
+    const uu = h.find(x=>['url','website','uri','web'].includes(x));
+    const un = h.find(x=>['username','user','login','email','correo'].includes(x));
+    const pw = h.find(x=>['password','pass','contraseña','contrasena','pwd'].includes(x));
+    if (un && pw) return { fmt:'Genérico', name:nu||null, url:uu||null, user:un, pass:pw, notes:null };
+    return null;
+}
+
+let pendingCSV = [];
+
+async function importCSV(e) {
+    const file = e.target.files[0]; if (!file) return;
+    e.target.value = '';
+    try {
+        const text  = await file.text();
+        const lines = text.split(/\r?\n/).filter(l => l.trim());
+        if (lines.length < 2) return toast('CSV vacío o sin datos.', 'err');
+        const headers = parseCSVRow(lines[0]);
+        const fmt     = detectFormat(headers);
+        if (!fmt) return toast('Formato no reconocido. Soportados: Chrome, Firefox, Bitwarden, LastPass, 1Password, Safari.', 'err');
+        const hi  = k => k ? headers.findIndex(h => h.toLowerCase().trim() === k.toLowerCase()) : -1;
+        const iN  = hi(fmt.name), iU = hi(fmt.url), iUn = hi(fmt.user), iP = hi(fmt.pass), iNo = hi(fmt.notes);
+        const existKeys = new Set(vault.entries.map(x => (x.username+'|'+(x.url||'')).toLowerCase()));
+        pendingCSV = [];
+        for (let i = 1; i < lines.length; i++) {
+            const cols = parseCSVRow(lines[i]);
+            if (cols.every(c => !c.trim())) continue;
+            const pw     = iP  >= 0 ? (cols[iP]?.trim()||'')  : '';  if (!pw) continue;
+            const rawUrl = iU  >= 0 ? (cols[iU]?.trim()||'')  : '';
+            const rawNm  = iN  >= 0 ? (cols[iN]?.trim()||'')  : '';
+            const name   = rawNm || (rawUrl ? rawUrl.replace(/^https?:\/\//,'').split('/')[0] : 'Importado');
+            const user   = iUn >= 0 ? (cols[iUn]?.trim()||'') : '';
+            const notes  = iNo >= 0 ? (cols[iNo]?.trim()||'') : '';
+            const cat    = autoCategory(name, rawUrl) || 'Otro';
+            const isDup  = existKeys.has((user+'|'+rawUrl).toLowerCase());
+            pendingCSV.push({ name, username:user, password:pw, url:rawUrl, notes, category:cat, isDup });
+        }
+        if (!pendingCSV.length) return toast('No se encontraron entradas con contraseña.', 'w');
+        $('csv-fmt').textContent = fmt.fmt;
+        const total = pendingCSV.length, dups = pendingCSV.filter(x=>x.isDup).length;
+        $('csv-summ').innerHTML = `<strong>${total}</strong> entradas · <strong style="color:var(--success)">${total-dups} nuevas</strong>${dups?` · <strong style="color:var(--warning)">${dups} duplicadas</strong>`:''}`;
+        $('csv-tbody').innerHTML = pendingCSV.slice(0,60).map(r =>
+            `<tr class="${r.isDup?'dup':''}"><td title="${esc(r.name)}">${esc(r.name)}</td><td title="${esc(r.username)}">${esc(r.username)||'—'}</td><td>${esc(r.category)}</td><td>${r.isDup?'⚠️ Dup':'✅'}</td></tr>`
+        ).join('');
+        $('csv-more').textContent = pendingCSV.length > 60 ? `… y ${pendingCSV.length-60} entradas más` : '';
+        openM('m-csv');
+    } catch(err) { toast('Error al leer el CSV: ' + err.message, 'err'); }
+}
+
+async function confirmImportCSV() {
+    const skipDups = $('csv-skipdups').checked;
+    const toAdd    = skipDups ? pendingCSV.filter(x=>!x.isDup) : pendingCSV;
+    if (!toAdd.length) return toast('Nada que importar.', 'w');
+    const now = new Date().toISOString();
+    toAdd.forEach(e => vault.entries.push({ id:uid(), name:e.name, username:e.username, password:e.password, url:e.url, notes:e.notes, category:e.category, fav:false, createdAt:now, updatedAt:now }));
+    await saveVault(); closeM('m-csv'); renderAll(); pendingCSV = [];
+    toast(`✅ ${toAdd.length} entradas importadas${skipDups&&pendingCSV.filter?'':''}.`, 'ok');
+}
+
+// ═══════════════════════════════════════════════════
+// SALUD DEL VAULT + AUTO-ORGANIZAR
+// ═══════════════════════════════════════════════════
+function openHealth() {
+    const entries = vault.entries;
+    // Duplicados (mismo usuario + url)
+    const seenK = {}, dups = [];
+    entries.forEach(e => { const k=(e.username+'|'+(e.url||'')).toLowerCase(); if(seenK[k]) dups.push(e); else seenK[k]=true; });
+    // Contraseñas débiles
+    const weak = entries.filter(e => str(e.password).score < 3);
+    // Reutilizadas
+    const pwMap = {};
+    entries.forEach(e => { (pwMap[e.password]=pwMap[e.password]||[]).push(e.name); });
+    const reused = Object.values(pwMap).filter(x=>x.length>1);
+    // Cuántas se pueden re-categorizar
+    let reCat = 0;
+    entries.forEach(e => { const s=autoCategory(e.name,e.url); if(s&&s!==e.category) reCat++; });
+
+    $('h-total').textContent = entries.length;
+    $('h-dups').textContent  = dups.length;
+    $('h-weak').textContent  = weak.length;
+    $('h-reuse').textContent = reused.length;
+    $('h-recat').textContent = reCat > 0 ? `✨ ${reCat} entradas pueden re-categorizarse automáticamente` : '✅ Categorías al día';
+
+    const issues = [];
+    dups.forEach(e   => issues.push({ tag:'dup',   txt:`Duplicada: ${e.name} (${e.username||'sin usuario'})` }));
+    weak.forEach(e   => issues.push({ tag:'weak',  txt:`Contraseña débil: ${e.name}` }));
+    reused.forEach(g => issues.push({ tag:'reuse', txt:`Contraseña reutilizada en: ${g.join(', ')}` }));
+
+    $('h-issues').innerHTML = issues.length
+        ? issues.slice(0,40).map(i=>`<li><span class="issue-tag tag-${i.tag}">${i.tag==='dup'?'⚠️ Dup':i.tag==='weak'?'🔴 Débil':'🔁 Reuso'}</span>${esc(i.txt)}</li>`).join('')
+        : '<li style="color:var(--success);padding:10px 0;">✅ ¡Sin problemas! Tu vault está en perfecto estado.</li>';
+
+    // Colorear stat boxes
+    $('h-dups').closest('.health-stat').className  = 'health-stat ' + (dups.length?'w':'ok');
+    $('h-weak').closest('.health-stat').className  = 'health-stat ' + (weak.length?'err':'ok');
+    $('h-reuse').closest('.health-stat').className = 'health-stat ' + (reused.length?'w':'ok');
+    openM('m-health');
+}
+
+async function doAutoOrganize() {
+    let changed = 0;
+    vault.entries.forEach(e => {
+        const sugg = autoCategory(e.name, e.url);
+        if (sugg && sugg !== e.category) { e.category = sugg; e.updatedAt = new Date().toISOString(); changed++; }
+    });
+    await saveVault(); closeM('m-health'); renderAll();
+    toast(changed > 0 ? `✨ ${changed} entradas re-categorizadas.` : '✅ Todo ya estaba bien categorizado.', 'ok');
 }
 
 function toast(msg, type='ok') {
