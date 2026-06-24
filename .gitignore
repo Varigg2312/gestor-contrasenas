@@ -1,0 +1,7 @@
+# Nunca subir backups del vault (contienen datos cifrados)
+*.vault
+*.vault.json
+
+# Sistema
+Thumbs.db
+.DS_Store
