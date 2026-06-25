@@ -257,6 +257,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
       <button class="ibtn" onclick="openHealth()" title="Salud y organizar">✨</button>
       <button class="ibtn" id="view-btn" onclick="toggleView()" title="Cambiar vista">⊞</button>
       <button class="ibtn" id="theme-btn" onclick="toggleTheme()" title="Tema">🌙</button>
+      <button class="ibtn" id="sync-btn" onclick="openSyncModal()" title="Sincronización con GitHub Gist">☁️</button>
       <button class="ibtn red" onclick="lockVault()">🔒 <span class="lock-cd" id="lcd"></span></button>
     </div>
   </header>
@@ -540,6 +541,44 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
   </div>
 </div>
 
+<!-- MODAL: SYNC -->
+<div class="overlay" id="m-sync">
+  <div class="modal" style="max-width:460px;">
+    <h2>☁️ Sincronización con GitHub Gist</h2>
+    <div style="background:rgba(88,166,255,.07);border:1px solid rgba(88,166,255,.25);border-radius:8px;padding:12px;margin-bottom:16px;font-size:.8rem;color:var(--text2);line-height:1.6;">
+      Tu vault cifrado se sube a un <strong style="color:var(--text)">Gist secreto</strong> en GitHub.
+      GitHub solo ve datos cifrados — nunca tu contraseña maestra ni tus contraseñas.<br>
+      Necesitas un <strong style="color:var(--text)">Personal Access Token</strong> con scope <code class="gcode">gist</code>.
+    </div>
+    <div class="fg">
+      <label>Estado</label>
+      <div id="sync-status-txt" style="font-size:.85rem;padding:6px 0;color:var(--text2);">⚪ No configurado</div>
+    </div>
+    <div class="fg">
+      <label>GitHub Personal Access Token <span style="color:var(--text2);font-weight:400;text-transform:none;">(scope: gist)</span></label>
+      <div class="iw">
+        <input id="sync-token" type="password" placeholder="ghp_xxxxxxxxxxxxxxxxxxxx" autocomplete="off" style="font-family:monospace;font-size:.82rem;">
+        <button class="iw-btn iw-eye" onclick="toggleEye('sync-token',this)">👁</button>
+      </div>
+    </div>
+    <div class="fg">
+      <label>Gist ID <span style="color:var(--text2);font-weight:400;text-transform:none;">(opcional — para enlazar un Gist existente)</span></label>
+      <input id="sync-gist-id" type="text" placeholder="Dejar vacío para crear uno nuevo" autocomplete="off" style="font-family:monospace;font-size:.82rem;">
+    </div>
+    <div style="font-size:.75rem;color:var(--text2);margin-bottom:14px;line-height:1.7;">
+      📋 Cómo obtener el token:<br>
+      GitHub → Foto de perfil → <strong>Settings → Developer settings →<br>Personal access tokens → Tokens (classic) → Generate new token</strong><br>
+      Selecciona solo: ✅ <strong>gist</strong>
+    </div>
+    <div class="m-acts">
+      <button class="btn-cancel" onclick="closeM('m-sync')">Cancelar</button>
+      <button class="ibtn" onclick="testSyncToken()" style="padding:8px 14px;">🔍 Probar</button>
+      <button class="btn-del-solid" onclick="disconnectSync()" style="font-size:.8rem;padding:8px 14px;">Desconectar</button>
+      <button class="btn-save" onclick="saveSyncSettings()">Guardar</button>
+    </div>
+  </div>
+</div>
+
 <script>
 // ══════════════════════════════════════
 // CRYPTO
@@ -598,6 +637,10 @@ function init() {
   // restore theme/view prefs
   if (localStorage.getItem('vault_light')==='1') { lightMode=true; document.body.classList.add('light'); $('theme-btn').textContent='☀️'; }
   if (localStorage.getItem('vault_list')==='1') { listView=true; $('view-btn').textContent='≡'; }
+  // restore sync status
+  const _scfg=loadSyncCfg();
+  if (_scfg?.token) syncSetStatus('ok', _scfg.lastSync?`Último sync: ${fmtDate(_scfg.lastSync)}`:'Conectado');
+  else syncSetStatus('off');
 }
 const $ = id => document.getElementById(id);
 const screen = id => $('screen-'+id)?.classList.contains('active');
@@ -612,6 +655,7 @@ async function saveVault() {
   const raw = load();
   const { iv, ct } = await C.encrypt(K, JSON.stringify(vault));
   persist({ salt:raw.salt, iv, ct });
+  syncPush();
 }
 
 // ══════════════════════════════════════
@@ -632,10 +676,23 @@ async function setupVault() {
 }
 
 async function unlockVault() {
-  const pw=$('l-pass').value, err=$('l-err'), raw=load();
+  const pw=$('l-pass').value, err=$('l-err');
   if (!pw) return (err.textContent='Introduce tu contraseña maestra.');
   err.textContent='Verificando…';
+  // Pull from Gist before decrypting so we always use the latest version
+  const scfg=loadSyncCfg();
+  if (scfg?.token && scfg?.gistId) {
+    err.textContent='Descargando desde la nube…';
+    try {
+      const remote=await gistApiFetch(scfg.token, scfg.gistId);
+      const remoteTime=new Date(remote.syncedAt||0).getTime();
+      const localTime=new Date(load()?.syncedAt||0).getTime();
+      if (remoteTime>localTime) { persist(remote); }
+    } catch(e) { /* red silencioso — usamos copia local */ }
+    err.textContent='Verificando…';
+  }
   try {
+    const raw=load();
     const key  = await C.deriveKey(pw, ub64(raw.salt));
     const json = await C.decrypt(key, raw.iv, raw.ct);
     vault = JSON.parse(json);
@@ -643,6 +700,7 @@ async function unlockVault() {
     if (!Array.isArray(vault.trash)) vault.trash = [];
     K = key; err.textContent=''; $('l-pass').value='';
     startSession();
+    if (scfg?.token) syncSetStatus('ok', scfg.lastSync?`Último sync: ${fmtDate(scfg.lastSync)}`:'Conectado');
   } catch { err.textContent='Contraseña incorrecta.'; K=null; vault=null; }
 }
 
@@ -1244,6 +1302,118 @@ function toast(msg,type='ok') {
   t.className=`toast t-${type}`;t.textContent=msg;c.appendChild(t);
   requestAnimationFrame(()=>t.classList.add('show'));
   setTimeout(()=>{t.classList.remove('show');t.addEventListener('transitionend',()=>t.remove(),{once:true});},4000);
+}
+
+// ══════════════════════════════════════
+// GIST SYNC
+// ══════════════════════════════════════
+const SYNC_LS = 'vault_sync';
+let _syncing = false;
+
+const loadSyncCfg = () => JSON.parse(localStorage.getItem(SYNC_LS)||'null');
+const saveSyncCfg = cfg => localStorage.setItem(SYNC_LS, JSON.stringify(cfg));
+
+function syncSetStatus(state, msg) {
+  const btn=$('sync-btn'); if(!btn) return;
+  if      (state==='ok')      { btn.textContent='☁️ ✓'; btn.title=msg||'Sincronizado'; btn.classList.add('on'); }
+  else if (state==='syncing') { btn.textContent='⏳';    btn.title='Sincronizando…';   btn.classList.remove('on'); }
+  else if (state==='err')     { btn.textContent='☁️ ⚠️'; btn.title=msg||'Error sync';  btn.classList.remove('on'); }
+  else                        { btn.textContent='☁️';    btn.title='Sync no configurada'; btn.classList.remove('on'); }
+}
+
+async function gistApiFetch(token, gistId) {
+  const r=await fetch(`https://api.github.com/gists/${gistId}`,{
+    headers:{Authorization:`Bearer ${token}`,Accept:'application/vnd.github+json'}
+  });
+  if(!r.ok) throw new Error(`GitHub ${r.status}`);
+  const data=await r.json();
+  const content=data.files?.['vault.enc']?.content;
+  if(!content) throw new Error('vault.enc no encontrado en el Gist');
+  return JSON.parse(content);
+}
+
+async function gistApiPush(token, gistId, blob) {
+  const url=gistId?`https://api.github.com/gists/${gistId}`:'https://api.github.com/gists';
+  const r=await fetch(url,{
+    method:gistId?'PATCH':'POST',
+    headers:{Authorization:`Bearer ${token}`,Accept:'application/vnd.github+json','Content-Type':'application/json'},
+    body:JSON.stringify({
+      description:'Vault cifrado — Gestor de Contraseñas',
+      public:false,
+      files:{'vault.enc':{content:JSON.stringify(blob)}}
+    })
+  });
+  if(!r.ok) throw new Error(`GitHub ${r.status}`);
+  return (await r.json()).id;
+}
+
+async function syncPush() {
+  const cfg=loadSyncCfg(); if(!cfg?.token||_syncing) return;
+  _syncing=true; syncSetStatus('syncing');
+  try {
+    const raw=load();
+    const blob={...raw, syncedAt:new Date().toISOString()};
+    const id=await gistApiPush(cfg.token, cfg.gistId||null, blob);
+    if(!cfg.gistId){cfg.gistId=id;}
+    cfg.lastSync=new Date().toISOString();
+    saveSyncCfg(cfg);
+    syncSetStatus('ok',`Último sync: ${fmtDate(cfg.lastSync)}`);
+  } catch(e){
+    syncSetStatus('err',e.message);
+    toast('⚠️ Error de sync: '+e.message,'err');
+  } finally { _syncing=false; }
+}
+
+function openSyncModal() {
+  const cfg=loadSyncCfg();
+  $('sync-token').value=cfg?.token||'';
+  $('sync-gist-id').value=cfg?.gistId||'';
+  $('sync-status-txt').textContent=cfg?.token
+    ?(cfg.lastSync?`✅ Conectado · último sync: ${fmtDate(cfg.lastSync)}`:'✅ Token configurado, sin sync aún')
+    :'⚪ No configurado';
+  openM('m-sync');
+}
+
+async function testSyncToken() {
+  const token=$('sync-token').value.trim();
+  if(!token) return toast('Introduce un token primero.','w');
+  try {
+    const r=await fetch('https://api.github.com/user',{headers:{Authorization:`Bearer ${token}`,Accept:'application/vnd.github+json'}});
+    if(!r.ok) throw new Error('Token inválido o sin permiso gist');
+    const u=await r.json();
+    $('sync-status-txt').textContent=`✅ Token válido · ${u.login}`;
+    toast(`✅ Token OK — cuenta: ${u.login}`,'ok');
+  } catch(e){
+    $('sync-status-txt').textContent='❌ '+e.message;
+    toast('❌ '+e.message,'err');
+  }
+}
+
+async function saveSyncSettings() {
+  const token=$('sync-token').value.trim();
+  if(!token){disconnectSync();return;}
+  syncSetStatus('syncing');
+  try {
+    const r=await fetch('https://api.github.com/user',{headers:{Authorization:`Bearer ${token}`,Accept:'application/vnd.github+json'}});
+    if(!r.ok) throw new Error('Token inválido');
+    const u=await r.json();
+    const gistId=$('sync-gist-id').value.trim()||null;
+    saveSyncCfg({token,gistId,user:u.login});
+    toast(`✅ Conectado como ${u.login}. Sincronizando…`,'ok');
+    closeM('m-sync');
+    await syncPush();
+  } catch(e){
+    syncSetStatus('err',e.message);
+    toast('Error: '+e.message,'err');
+  }
+}
+
+function disconnectSync() {
+  if(!confirm('¿Desconectar la sincronización? El Gist de GitHub no se eliminará.')) return;
+  localStorage.removeItem(SYNC_LS);
+  syncSetStatus('off');
+  closeM('m-sync');
+  toast('Sincronización desactivada.','w');
 }
 
 init();
