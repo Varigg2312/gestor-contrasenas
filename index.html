@@ -210,6 +210,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 .sw-badge{font-size:.68rem;padding:2px 8px;border-radius:10px;border:1px solid var(--border);color:var(--text2);cursor:default;white-space:nowrap;}
 .sw-badge.ok{border-color:var(--success);color:var(--success);background:rgba(63,185,80,.1);}
 .sw-badge.err{border-color:var(--warning);color:var(--warning);}
+.sw-badge.update{border-color:var(--accent);color:var(--accent);background:rgba(88,166,255,.1);}
 .drag-hint{font-size:.65rem;color:var(--text2);margin-top:2px;display:none;}
 .pass-reveal[draggable=true]{border-color:var(--accent);cursor:grab;}
 </style>
@@ -589,67 +590,44 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 
 <script>
 // ══════════════════════════════════════
-// SERVICE WORKER — Supply Chain Isolation
-// Blob URL registration: intercepta navegaciones en Firefox/Safari.
-// En Chrome falla por restricción de scope null-origin — el badge muestra ⚠.
+// SERVICE WORKER — sw.js físico, cache-first agresivo
+// Scope correcto: intercepta navegaciones al dominio completo
 // ══════════════════════════════════════
 (function() {
   if (!('serviceWorker' in navigator)) return;
-  const swCode = `
-    const CACHE='vault-sw-v1';
-    self.addEventListener('install', e => {
-      const page = new URL('.', self.location.href).href;
-      e.waitUntil(
-        fetch(page,{cache:'no-store'})
-          .then(r=>caches.open(CACHE).then(c=>c.put(page,r)))
-          .catch(()=>{})
-          .then(()=>self.skipWaiting())
-      );
-    });
-    self.addEventListener('activate', e => {
-      e.waitUntil(
-        caches.keys()
-          .then(ks=>Promise.all(ks.filter(k=>k!==CACHE).map(k=>caches.delete(k))))
-          .then(()=>self.clients.claim())
-      );
-    });
-    self.addEventListener('fetch', e => {
-      if (e.request.mode==='navigate') {
-        e.respondWith(
-          caches.match(e.request).then(r=>r||fetch(e.request).then(fresh=>{
-            const clone=fresh.clone();
-            caches.open(CACHE).then(c=>c.put(e.request,clone));
-            return fresh;
-          }))
-        );
-      }
-    });
-    self.addEventListener('message', e=>{ if(e.data==='SKIP_WAITING') self.skipWaiting(); });
-  `;
-  try {
-    const blob = new Blob([swCode],{type:'application/javascript'});
-    const blobUrl = URL.createObjectURL(blob);
-    navigator.serviceWorker.register(blobUrl,{scope:location.pathname})
-      .then(reg=>{
-        setSWBadge('ok','Cache activo — CDN neutralizado');
-        if (reg.waiting) showUpdateBtn();
-        reg.addEventListener('updatefound',()=>{
-          reg.installing?.addEventListener('statechange',()=>{ if(reg.waiting) showUpdateBtn(); });
+  navigator.serviceWorker.register('./sw.js')
+    .then(reg => {
+      setSWBadge('ok','Cache activo — app disponible offline');
+      if (reg.waiting) { setSWBadge('update','Nueva versión disponible'); showUpdateBtn(); }
+      reg.addEventListener('updatefound', () => {
+        const nw = reg.installing;
+        nw.addEventListener('statechange', () => {
+          if (nw.state === 'installed' && navigator.serviceWorker.controller) {
+            setSWBadge('update','Nueva versión disponible');
+            showUpdateBtn();
+          }
         });
-      })
-      .catch(err=>setSWBadge('err','SW: '+err.message.slice(0,50)));
-  } catch(e) { /* SW no soportado */ }
+      });
+      // Cuando el SW nuevo toma control (tras SKIP_WAITING), recargar
+      navigator.serviceWorker.addEventListener('controllerchange', () => location.reload());
+    })
+    .catch(err => setSWBadge('err','SW error: '+err.message.slice(0,50)));
 })();
 
 function setSWBadge(s,t) {
   const el=document.getElementById('sw-badge'); if(!el) return;
-  el.className='sw-badge '+(s==='ok'?'ok':'err');
-  el.textContent=s==='ok'?'SW ✓':'SW ⚠'; el.title=t||'';
+  el.className='sw-badge '+(s==='ok'?'ok':s==='update'?'update':'err');
+  el.textContent=s==='ok'?'SW ✓':s==='update'?'SW 🔄':'SW ⚠'; el.title=t||'';
 }
 function showUpdateBtn() { const b=document.getElementById('update-btn'); if(b) b.style.display=''; }
 function updateApp() {
-  if(!confirm('¿Actualizar la app? Se borrará la caché y se recargará.')) return;
-  caches.keys().then(ks=>Promise.all(ks.map(k=>caches.delete(k)))).then(()=>location.reload());
+  if(!confirm('¿Actualizar la app? Se aplicará la nueva versión y se recargará.')) return;
+  if (navigator.serviceWorker.controller) {
+    // Enviar SKIP_WAITING al worker en espera; controllerchange dispara location.reload()
+    navigator.serviceWorker.controller.postMessage({type:'SKIP_WAITING'});
+  } else {
+    caches.keys().then(ks=>Promise.all(ks.map(k=>caches.delete(k)))).then(()=>location.reload());
+  }
 }
 
 // ══════════════════════════════════════
