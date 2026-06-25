@@ -207,6 +207,11 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 .t-act:hover{border-color:var(--accent);color:var(--accent);}
 .t-act.del:hover{border-color:var(--danger);color:var(--danger);}
 @media(max-width:620px){.sidebar{display:none;}.grid{grid-template-columns:1fr;}.frow{flex-direction:column;}}
+.sw-badge{font-size:.68rem;padding:2px 8px;border-radius:10px;border:1px solid var(--border);color:var(--text2);cursor:default;white-space:nowrap;}
+.sw-badge.ok{border-color:var(--success);color:var(--success);background:rgba(63,185,80,.1);}
+.sw-badge.err{border-color:var(--warning);color:var(--warning);}
+.drag-hint{font-size:.65rem;color:var(--text2);margin-top:2px;display:none;}
+.pass-reveal[draggable=true]{border-color:var(--accent);cursor:grab;}
 </style>
 </head>
 <body>
@@ -258,6 +263,8 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
       <button class="ibtn" id="view-btn" onclick="toggleView()" title="Cambiar vista">⊞</button>
       <button class="ibtn" id="theme-btn" onclick="toggleTheme()" title="Tema">🌙</button>
       <button class="ibtn" id="sync-btn" onclick="openSyncModal()" title="Sincronización con GitHub Gist">☁️</button>
+      <span class="sw-badge off" id="sw-badge" title="Service Worker — protección supply chain">SW —</span>
+      <button class="ibtn" onclick="updateApp()" id="update-btn" style="display:none" title="Nueva versión disponible — clic para actualizar">🔄 Act.</button>
       <button class="ibtn red" onclick="lockVault()">🔒 <span class="lock-cd" id="lcd"></span></button>
     </div>
   </header>
@@ -582,6 +589,70 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 
 <script>
 // ══════════════════════════════════════
+// SERVICE WORKER — Supply Chain Isolation
+// Blob URL registration: intercepta navegaciones en Firefox/Safari.
+// En Chrome falla por restricción de scope null-origin — el badge muestra ⚠.
+// ══════════════════════════════════════
+(function() {
+  if (!('serviceWorker' in navigator)) return;
+  const swCode = `
+    const CACHE='vault-sw-v1';
+    self.addEventListener('install', e => {
+      const page = new URL('.', self.location.href).href;
+      e.waitUntil(
+        fetch(page,{cache:'no-store'})
+          .then(r=>caches.open(CACHE).then(c=>c.put(page,r)))
+          .catch(()=>{})
+          .then(()=>self.skipWaiting())
+      );
+    });
+    self.addEventListener('activate', e => {
+      e.waitUntil(
+        caches.keys()
+          .then(ks=>Promise.all(ks.filter(k=>k!==CACHE).map(k=>caches.delete(k))))
+          .then(()=>self.clients.claim())
+      );
+    });
+    self.addEventListener('fetch', e => {
+      if (e.request.mode==='navigate') {
+        e.respondWith(
+          caches.match(e.request).then(r=>r||fetch(e.request).then(fresh=>{
+            const clone=fresh.clone();
+            caches.open(CACHE).then(c=>c.put(e.request,clone));
+            return fresh;
+          }))
+        );
+      }
+    });
+    self.addEventListener('message', e=>{ if(e.data==='SKIP_WAITING') self.skipWaiting(); });
+  `;
+  try {
+    const blob = new Blob([swCode],{type:'application/javascript'});
+    const blobUrl = URL.createObjectURL(blob);
+    navigator.serviceWorker.register(blobUrl,{scope:location.pathname})
+      .then(reg=>{
+        setSWBadge('ok','Cache activo — CDN neutralizado');
+        if (reg.waiting) showUpdateBtn();
+        reg.addEventListener('updatefound',()=>{
+          reg.installing?.addEventListener('statechange',()=>{ if(reg.waiting) showUpdateBtn(); });
+        });
+      })
+      .catch(err=>setSWBadge('err','SW: '+err.message.slice(0,50)));
+  } catch(e) { /* SW no soportado */ }
+})();
+
+function setSWBadge(s,t) {
+  const el=document.getElementById('sw-badge'); if(!el) return;
+  el.className='sw-badge '+(s==='ok'?'ok':'err');
+  el.textContent=s==='ok'?'SW ✓':'SW ⚠'; el.title=t||'';
+}
+function showUpdateBtn() { const b=document.getElementById('update-btn'); if(b) b.style.display=''; }
+function updateApp() {
+  if(!confirm('¿Actualizar la app? Se borrará la caché y se recargará.')) return;
+  caches.keys().then(ks=>Promise.all(ks.map(k=>caches.delete(k)))).then(()=>location.reload());
+}
+
+// ══════════════════════════════════════
 // CRYPTO
 // ══════════════════════════════════════
 const C = {
@@ -680,26 +751,41 @@ async function unlockVault() {
   const pw=$('l-pass').value, err=$('l-err');
   if (!pw) return (err.textContent='Introduce tu contraseña maestra.');
   err.textContent='Verificando…';
-  // Pull from Gist before decrypting so we always use the latest version
-  const scfg=loadSyncCfg();
-  if (scfg?.token && scfg?.gistId) {
-    err.textContent='Descargando desde la nube…';
-    try {
-      const remote=await gistApiFetch(scfg.token, scfg.gistId);
-      const remoteTime=new Date(remote.syncedAt||0).getTime();
-      const localTime=new Date(load()?.syncedAt||0).getTime();
-      if (remoteTime>localTime) { persist(remote); }
-    } catch(e) { /* red silencioso — usamos copia local */ }
-    err.textContent='Verificando…';
-  }
   try {
     const raw=load();
-    const key  = await C.deriveKey(pw, ub64(raw.salt));
-    const json = await C.decrypt(key, raw.iv, raw.ct);
-    vault = JSON.parse(json);
-    if (!Array.isArray(vault.entries)) throw 0;
-    if (!Array.isArray(vault.trash)) vault.trash = [];
-    K = key; err.textContent=''; $('l-pass').value='';
+    const key=await C.deriveKey(pw, ub64(raw.salt));
+    const json=await C.decrypt(key, raw.iv, raw.ct);
+    let localVault=JSON.parse(json);
+    if (!Array.isArray(localVault.entries)) throw 0;
+    if (!Array.isArray(localVault.trash)) localVault.trash=[];
+    K=key;
+
+    // CRDT merge: decrypt remote, merge item-level, re-encrypt and push
+    const scfg=loadSyncCfg();
+    if (scfg?.token && scfg?.gistId) {
+      err.textContent='Sincronizando…';
+      try {
+        const remoteBlob=await gistApiFetch(scfg.token, scfg.gistId);
+        // Reutilizar key si mismo salt, derivar nueva si difieren (dispositivos independientes)
+        const remoteKey=raw.salt===remoteBlob.salt ? key : await C.deriveKey(pw, ub64(remoteBlob.salt));
+        const remoteJson=await C.decrypt(remoteKey, remoteBlob.iv, remoteBlob.ct);
+        let remoteVault=JSON.parse(remoteJson);
+        if (!Array.isArray(remoteVault.entries)) remoteVault.entries=[];
+        if (!Array.isArray(remoteVault.trash))   remoteVault.trash=[];
+        vault=mergeVaults(localVault, remoteVault);
+        const merged=await C.encrypt(K, JSON.stringify(vault));
+        persist({salt:raw.salt, iv:merged.iv, ct:merged.ct});
+        syncPush(); // fire-and-forget: sube el merge resultante al Gist
+        toast('☁️ Vault sincronizado y fusionado.','ok');
+      } catch(e) {
+        vault=localVault; // sin red o clave distinta — continuar con local
+        toast('⚠️ Sync offline — usando vault local.','w');
+      }
+    } else {
+      vault=localVault;
+    }
+
+    err.textContent=''; $('l-pass').value='';
     startSession();
     if (scfg?.token) syncSetStatus('ok', scfg.lastSync?`Último sync: ${fmtDate(scfg.lastSync)}`:'Conectado');
   } catch { err.textContent='Contraseña incorrecta.'; K=null; vault=null; }
@@ -845,6 +931,7 @@ function render() {
         <button class="cbtn del" onclick="askDel('${e.id}')">🗑️</button>
       </div>
       <div class="pass-reveal" id="pr-${e.id}"></div>
+      <div class="drag-hint" id="dh-${e.id}">↕ Arrastra al campo de destino (sin portapapeles del SO)</div>
       ${totpHtml}
     </div>`;
   }).join('');
@@ -907,16 +994,38 @@ function copyPw(id) {
   navigator.clipboard.writeText(e.password).then(()=>{
     const btn=$('cp-'+id);
     if (btn) { btn.textContent='✅ Copiado'; btn.classList.add('ok'); }
-    toast('Contraseña copiada. Limpiando en 30 s.','ok');
-    setTimeout(()=>{ navigator.clipboard.writeText('').catch(()=>{}); if(btn){btn.textContent='📋 Copiar';btn.classList.remove('ok');} },30_000);
-  }).catch(()=>toast('No se pudo copiar. Usa "Ver".','err'));
+    const isMobile=navigator.maxTouchPoints>0;
+    const delay=isMobile?20_000:30_000;
+    toast(`Contraseña copiada. Limpiando en ${delay/1000}s.`,'ok');
+    if (isMobile) toast('📱 Desactiva el historial del portapapeles del SO (Win+V).','w');
+    setTimeout(async ()=>{
+      if (isMobile) {
+        // Inyección de ruido: fuerza expulsión de la contraseña real del ring-buffer del historial
+        try { await navigator.clipboard.writeText(crypto.randomUUID()); } catch {}
+        await new Promise(r=>setTimeout(r,300));
+      }
+      navigator.clipboard.writeText('').catch(()=>{});
+      if (btn) { btn.textContent='📋 Copiar'; btn.classList.remove('ok'); }
+    }, delay);
+  }).catch(()=>toast('No se pudo copiar. Usa "Ver" o arrastra la contraseña.','err'));
 }
 
 function toggleShow(id) {
   const e=vault.entries.find(x=>x.id===id);
-  const box=$('pr-'+id), btn=$('sh-'+id);
-  if (box.style.display==='block') { box.style.display='none'; box.textContent=''; btn.textContent='👁 Ver'; }
-  else { box.textContent=e.password; box.style.display='block'; btn.textContent='🙈 Ocultar'; }
+  const box=$('pr-'+id), btn=$('sh-'+id), hint=$('dh-'+id);
+  if (box.style.display==='block') {
+    box.style.display='none'; box.textContent=''; box.removeAttribute('draggable');
+    box.ondragstart=null; box.ondragend=null;
+    if (hint) hint.style.display='none';
+    btn.textContent='👁 Ver';
+  } else {
+    box.textContent=e.password; box.style.display='block';
+    box.setAttribute('draggable','true');
+    box.ondragstart=ev=>{ ev.dataTransfer.setData('text/plain',e.password); ev.dataTransfer.effectAllowed='copy'; };
+    box.ondragend=()=>{ box.style.display='none'; box.textContent=''; box.removeAttribute('draggable'); if(hint) hint.style.display='none'; btn.textContent='👁 Ver'; };
+    if (hint) hint.style.display='block';
+    btn.textContent='🙈 Ocultar';
+  }
 }
 
 // ══════════════════════════════════════
@@ -1021,7 +1130,8 @@ function askDel(id) { delId=id; const e=vault.entries.find(x=>x.id===id); $('del
 
 async function doSoftDelete() {
   const e=vault.entries.find(x=>x.id===delId); if(!e) return;
-  e.deletedAt=new Date().toISOString();
+  const now=new Date().toISOString();
+  e.deletedAt=now; e.updatedAt=now; e.deleted=true;
   vault.trash.push(e);
   vault.entries=vault.entries.filter(x=>x.id!==delId);
   await saveVault(); closeM('m-del'); renderAll();
@@ -1054,7 +1164,9 @@ function openTrashModal() {
 
 async function restoreEntry(id) {
   const e=vault.trash.find(x=>x.id===id); if(!e) return;
-  delete e.deletedAt; vault.entries.push(e);
+  delete e.deletedAt; delete e.deleted;
+  e.updatedAt=new Date().toISOString();
+  vault.entries.push(e);
   vault.trash=vault.trash.filter(x=>x.id!==id);
   await saveVault(); openTrashModal(); renderAll();
   toast(`"${e.name}" restaurada.`,'ok');
@@ -1401,26 +1513,29 @@ async function saveSyncSettings() {
     const gistId=$('sync-gist-id').value.trim()||null;
     saveSyncCfg({token,gistId,user:u.login});
     closeM('m-sync');
-    if (gistId) {
-      // Connecting to existing Gist: pull first so we don't overwrite remote data
+    if (gistId && K) {
+      // CRDT merge al conectar a un Gist existente (K disponible — vault desbloqueado)
       try {
-        const remote=await gistApiFetch(token,gistId);
-        const remoteEntries=(()=>{try{return JSON.parse(atob(remote.ct||'')||'{}').entries?.length||0;}catch{return 1;}})();
-        const localEntries=vault?.entries?.length||0;
-        const remoteTime=new Date(remote.syncedAt||0).getTime();
-        const localTime=new Date(load()?.syncedAt||0).getTime();
-        // Pull if remote is newer OR has more entries than local
-        if (remoteTime>localTime || remoteEntries>localEntries) {
-          persist(remote);
-          lockVault();
-          toast('☁️ Vault descargado desde la nube. Desbloquea de nuevo para verlo.','ok');
-          syncSetStatus('ok');
-          return;
+        const remoteBlob=await gistApiFetch(token,gistId);
+        const raw=load();
+        const remoteKey=raw.salt===remoteBlob.salt ? K : null; // sin pw aquí — solo si mismo salt
+        if (remoteKey) {
+          const remoteJson=await C.decrypt(remoteKey,remoteBlob.iv,remoteBlob.ct);
+          let remoteVault=JSON.parse(remoteJson);
+          if (!Array.isArray(remoteVault.entries)) remoteVault.entries=[];
+          if (!Array.isArray(remoteVault.trash))   remoteVault.trash=[];
+          vault=mergeVaults(vault,remoteVault);
+          renderAll();
+          toast(`✅ Conectado como ${u.login}. Vault fusionado (CRDT).`,'ok');
+        } else {
+          toast(`✅ Conectado como ${u.login}. Salt distinto — solo push local.`,'ok');
         }
-      } catch(e){ /* Gist vacío o error — hacemos push */ }
+      } catch(e){ toast(`✅ Conectado como ${u.login}. Gist vacío — subiendo vault local.`,'ok'); }
+    } else {
+      toast(`✅ Conectado como ${u.login}.`,'ok');
     }
     await syncPush();
-    toast(`✅ Conectado como ${u.login}.`,'ok');
+    syncSetStatus('ok');
   } catch(e){
     syncSetStatus('err',e.message);
     toast('Error: '+e.message,'err');
@@ -1433,6 +1548,48 @@ function disconnectSync() {
   syncSetStatus('off');
   closeM('m-sync');
   toast('Sincronización desactivada.','w');
+}
+
+// ══════════════════════════════════════
+// CRDT MERGE — LWW por ítem con tombstones
+// ══════════════════════════════════════
+function mergeVaults(localVault, remoteVault) {
+  const index = new Map();
+  const CUTOFF = Date.now() - 30 * 86_400_000; // purgar tombstones > 30 días
+
+  function indexPool(v) {
+    // Entradas activas: deleted=false (o ausente)
+    for (const e of (v.entries||[])) {
+      const item={...e, deleted:false};
+      const t=new Date(item.updatedAt||item.createdAt||0).getTime();
+      const ex=index.get(item.id);
+      const et=ex?new Date(ex.updatedAt||ex.createdAt||0).getTime():-1;
+      if (!ex||t>et) index.set(item.id,item);
+    }
+    // Entradas en papelera: deleted=true, LWW por deletedAt
+    for (const e of (v.trash||[])) {
+      const item={...e, deleted:true};
+      const t=new Date(item.deletedAt||item.updatedAt||0).getTime();
+      const ex=index.get(item.id);
+      const et=ex?new Date(ex.deletedAt||ex.updatedAt||ex.createdAt||0).getTime():-1;
+      if (!ex||t>et) index.set(item.id,item);
+    }
+  }
+
+  indexPool(localVault);
+  indexPool(remoteVault);
+
+  const entries=[], trash=[];
+  for (const item of index.values()) {
+    if (item.deleted) {
+      // Mantener tombstone si < 30 días; purgar si más antiguo
+      if (new Date(item.deletedAt||0).getTime() > CUTOFF) trash.push(item);
+    } else {
+      entries.push(item);
+    }
+  }
+
+  return { ...localVault, entries, trash, mergedAt:new Date().toISOString() };
 }
 
 init();
