@@ -570,9 +570,10 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
       GitHub → Foto de perfil → <strong>Settings → Developer settings →<br>Personal access tokens → Tokens (classic) → Generate new token</strong><br>
       Selecciona solo: ✅ <strong>gist</strong>
     </div>
-    <div class="m-acts">
+    <div class="m-acts" style="flex-wrap:wrap;gap:7px;">
       <button class="btn-cancel" onclick="closeM('m-sync')">Cancelar</button>
       <button class="ibtn" onclick="testSyncToken()" style="padding:8px 14px;">🔍 Probar</button>
+      <button class="ibtn" onclick="closeM('m-sync');syncPush()" style="padding:8px 14px;" title="Forzar subida del vault actual al Gist">⬆️ Subir ahora</button>
       <button class="btn-del-solid" onclick="disconnectSync()" style="font-size:.8rem;padding:8px 14px;">Desconectar</button>
       <button class="btn-save" onclick="saveSyncSettings()">Guardar</button>
     </div>
@@ -1399,9 +1400,27 @@ async function saveSyncSettings() {
     const u=await r.json();
     const gistId=$('sync-gist-id').value.trim()||null;
     saveSyncCfg({token,gistId,user:u.login});
-    toast(`✅ Conectado como ${u.login}. Sincronizando…`,'ok');
     closeM('m-sync');
+    if (gistId) {
+      // Connecting to existing Gist: pull first so we don't overwrite remote data
+      try {
+        const remote=await gistApiFetch(token,gistId);
+        const remoteEntries=(()=>{try{return JSON.parse(atob(remote.ct||'')||'{}').entries?.length||0;}catch{return 1;}})();
+        const localEntries=vault?.entries?.length||0;
+        const remoteTime=new Date(remote.syncedAt||0).getTime();
+        const localTime=new Date(load()?.syncedAt||0).getTime();
+        // Pull if remote is newer OR has more entries than local
+        if (remoteTime>localTime || remoteEntries>localEntries) {
+          persist(remote);
+          lockVault();
+          toast('☁️ Vault descargado desde la nube. Desbloquea de nuevo para verlo.','ok');
+          syncSetStatus('ok');
+          return;
+        }
+      } catch(e){ /* Gist vacío o error — hacemos push */ }
+    }
     await syncPush();
+    toast(`✅ Conectado como ${u.login}.`,'ok');
   } catch(e){
     syncSetStatus('err',e.message);
     toast('Error: '+e.message,'err');
